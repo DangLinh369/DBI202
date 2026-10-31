@@ -1,30 +1,7 @@
 USE DBI_GROUP_7;
 GO
 
-IF NOT EXISTS (SELECT 1 FROM Inventory)
-BEGIN
-    INSERT INTO Inventory (inventory_id, product_id, warehouse_id, quantity_on_hand, quantity_reserved, reorder_level, shelf_location, last_counted_at, updated_at) VALUES
-    ('INV001', 'PRD001', 'WH001', 120, 15, 30, 'A1-01', '2025-09-01 08:00:00', '2025-09-25 08:00:00'),
-    ('INV002', 'PRD002', 'WH001', 85,  10, 25, 'A1-02', '2025-09-01 08:00:00', '2025-09-25 08:00:00'),
-    ('INV003', 'PRD003', 'WH001', 25,  10, 20, 'A1-03', '2025-09-01 08:00:00', '2025-09-25 08:00:00'),
-    ('INV004', 'PRD004', 'WH002', 60,  5,  15, 'B1-03', '2025-09-01 08:05:00', '2025-09-25 08:05:00'),
-    ('INV005', 'PRD005', 'WH001', 150, 20, 40, 'A1-05', '2025-09-01 08:00:00', '2025-09-25 08:00:00'),
-    ('INV006', 'PRD006', 'WH001', 18,  6,  15, 'A2-03', '2025-09-01 08:00:00', '2025-09-25 08:00:00'),
-    ('INV007', 'PRD007', 'WH002', 45,  8,  15, 'B2-01', '2025-09-01 08:05:00', '2025-09-25 08:05:00'),
-    ('INV008', 'PRD008', 'WH003', 14,  5,  12, 'C2-04', '2025-09-01 08:10:00', '2025-09-25 08:10:00'),
-    ('INV009', 'PRD009', 'WH001', 90,  12, 25, 'A1-04', '2025-09-01 08:00:00', '2025-09-25 08:00:00'),
-    ('INV010', 'PRD010', 'WH004', 70,  10, 20, 'D1-02', '2025-09-01 08:15:00', '2025-09-25 08:15:00'),
-    ('INV011', 'PRD011', 'WH001', 55,  5,  15, 'A2-05', '2025-09-01 08:00:00', '2025-09-25 08:00:00'),
-    ('INV012', 'PRD012', 'WH001', 12,  4,  10, 'A3-01', '2025-09-01 08:00:00', '2025-09-25 08:00:00'),
-    ('INV013', 'PRD013', 'WH003', 40,  6,  10, 'C1-02', '2025-09-01 08:10:00', '2025-09-25 08:10:00'),
-    ('INV014', 'PRD014', 'WH001', 65,  8,  20, 'A3-05', '2025-09-01 08:00:00', '2025-09-25 08:00:00'),
-    ('INV015', 'PRD015', 'WH001', 110, 15, 30, 'A2-01', '2025-09-01 08:00:00', '2025-09-25 08:00:00'),
-    ('INV016', 'PRD016', 'WH001', 95,  10, 25, 'A2-02', '2025-09-01 08:00:00', '2025-09-25 08:00:00'),
-    ('INV017', 'PRD017', 'WH003', 80,  5,  20, 'C1-05', '2025-09-01 08:10:00', '2025-09-25 08:10:00'),
-    ('INV018', 'PRD018', 'WH005', 22,  8,  20, 'E1-01', '2025-09-01 08:20:00', '2025-09-25 08:20:00'),
-    ('INV019', 'PRD019', 'WH001', 200, 25, 50, 'A1-06', '2025-09-01 08:00:00', '2025-09-25 08:00:00');
-END
-GO
+-- Dữ liệu (kể cả bảng Inventory) được nạp từ file 'Insert data.sql'
 
 -- ============================================================
 -- PHẦN 1 : USER-DEFINED FUNCTION (4 CÂU)
@@ -494,44 +471,48 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    -- Xác định kho xuất hàng của đơn thông qua doanh nghiệp (Orders.business_id -> Warehouse.business_id)
     IF EXISTS (
         SELECT 1
         FROM (
-            SELECT product_id, SUM(quantity) AS total_requested
-            FROM inserted
-            GROUP BY product_id
+            SELECT ins.product_id, w.warehouse_id, SUM(ins.quantity) AS total_requested
+            FROM inserted  ins
+            JOIN Orders    o ON o.order_id    = ins.order_id
+            JOIN Warehouse w ON w.business_id = o.business_id
+            GROUP BY ins.product_id, w.warehouse_id
         ) req
-        LEFT JOIN (
-            SELECT product_id, SUM(quantity_on_hand - quantity_reserved) AS total_available
-            FROM Inventory
-            GROUP BY product_id
-        ) inv ON inv.product_id = req.product_id
-        WHERE ISNULL(inv.total_available, 0) < req.total_requested
+        LEFT JOIN Inventory inv
+               ON inv.product_id   = req.product_id
+              AND inv.warehouse_id = req.warehouse_id
+        WHERE ISNULL(inv.quantity_on_hand - inv.quantity_reserved, 0) < req.total_requested
     )
     BEGIN
-        RAISERROR(N'Lỗi Trigger: Số lượng tồn kho khả dụng không đủ để đặt giữ cho đơn hàng!', 16, 1);
+        RAISERROR(N'Lỗi Trigger: Số lượng tồn kho khả dụng tại kho của doanh nghiệp không đủ để đặt giữ!', 16, 1);
         ROLLBACK TRANSACTION;
         RETURN;
     END
 
-    -- Giả định: mỗi sản phẩm chỉ thuộc 1 kho chính (OrderItem không có warehouse_id)
     ;WITH GroupedInserted AS (
-        SELECT product_id, SUM(quantity) AS total_qty
-        FROM inserted
-        GROUP BY product_id
+        SELECT ins.product_id, w.warehouse_id, SUM(ins.quantity) AS total_qty
+        FROM inserted  ins
+        JOIN Orders    o ON o.order_id    = ins.order_id
+        JOIN Warehouse w ON w.business_id = o.business_id
+        GROUP BY ins.product_id, w.warehouse_id
     )
     UPDATE inv
     SET quantity_reserved = inv.quantity_reserved + gi.total_qty,
         updated_at        = GETDATE()
     FROM Inventory inv
-    JOIN GroupedInserted gi ON gi.product_id = inv.product_id;
+    JOIN GroupedInserted gi
+      ON gi.product_id   = inv.product_id
+     AND gi.warehouse_id = inv.warehouse_id;
 END
 GO
 
-SELECT product_id, quantity_on_hand, quantity_reserved FROM Inventory WHERE product_id = 'PRD001';
+SELECT inventory_id, warehouse_id, product_id, quantity_on_hand, quantity_reserved FROM Inventory WHERE product_id = 'PRD001';
 INSERT INTO OrderItem (order_item_id, order_id, product_id, external_item_id, quantity, unit_price, discount, tax, status)
 VALUES ('OI0100', 'ORD0015', 'PRD001', 'WEB-ITEM-100', 3, 329000, 0, 0, 'pending');
-SELECT product_id, quantity_on_hand, quantity_reserved FROM Inventory WHERE product_id = 'PRD001';
+SELECT inventory_id, warehouse_id, product_id, quantity_on_hand, quantity_reserved FROM Inventory WHERE product_id = 'PRD001';
 GO
 
 
