@@ -122,8 +122,7 @@ SELECT * FROM dbo.fn_GetFulfillmentsByWarehouse('WH001');
 
 -- SP1 — Insert 1 bảng (Rất dễ)
 -- Viết stored procedure sp_CreateFulfillment nhận vào @order_id, @warehouse_id, @staff_id, @priority.
--- Chỉ cần INSERT một dòng mới vào bảng Fulfillment với status = 'pending', created_at = GETDATE().
--- Không cần transaction, không cần ghi FulfillmentProgress.
+GO 
 CREATE OR ALTER PROCEDURE dbo.sp_CreateFulfillment
     @order_id     NVARCHAR(50),
     @warehouse_id NVARCHAR(50),
@@ -132,16 +131,12 @@ CREATE OR ALTER PROCEDURE dbo.sp_CreateFulfillment
 AS
 BEGIN
     SET NOCOUNT ON;
-
     DECLARE @new_fulfillment_id NVARCHAR(50);
-
     SELECT @new_fulfillment_id = 'FUL' + RIGHT('0000' + CAST(ISNULL(MAX(CAST(SUBSTRING(fulfillment_id, 4, 10) AS INT)), 0) + 1 AS VARCHAR(10)), 4)
     FROM Fulfillment;
-
     INSERT INTO Fulfillment (
         fulfillment_id, status, priority, start_time, completed_time,
-        note, created_at, updated_at, order_id, warehouse_id, assigned_staff_id
-    )
+        note, created_at, updated_at, order_id, warehouse_id, assigned_staff_id)
     VALUES (
         @new_fulfillment_id, 'pending', @priority, NULL, NULL,
         NULL, GETDATE(), GETDATE(),
@@ -149,8 +144,7 @@ BEGIN
     );
 END
 GO
-
--- Test SP1:
+--
 EXEC dbo.sp_CreateFulfillment
     @order_id     = 'ORD0015',
     @warehouse_id = 'WH001',
@@ -158,13 +152,12 @@ EXEC dbo.sp_CreateFulfillment
     @priority     = 1;
 
 SELECT * FROM Fulfillment WHERE order_id = 'ORD0015';
-GO
 
 
--- SP2 — Update 1 bảng (Rất dễ)
+-- SP2 
 -- Viết stored procedure sp_UpdateFulfillmentStatus nhận vào @fulfillment_id, @new_status.
 -- Chỉ cần UPDATE Fulfillment.status = @new_status cho đúng dòng có fulfillment_id tương ứng.
--- Không cần cập nhật Orders hay FulfillmentProgress.
+GO
 CREATE OR ALTER PROCEDURE dbo.sp_UpdateFulfillmentStatus
     @fulfillment_id NVARCHAR(50),
     @new_status     NVARCHAR(50)
@@ -178,8 +171,7 @@ BEGIN
     WHERE fulfillment_id = @fulfillment_id;
 END
 GO
-
--- Test SP2:
+-- 
 EXEC dbo.sp_UpdateFulfillmentStatus
     @fulfillment_id = 'FUL0014',
     @new_status     = 'packing';
@@ -188,10 +180,9 @@ SELECT fulfillment_id, order_id, status, updated_at FROM Fulfillment WHERE fulfi
 GO
 
 
--- SP3 — Insert với tham số (Dễ)
+-- SP3
 -- Viết stored procedure sp_AddFulfillmentProgress nhận vào @fulfillment_id, @step, @status, @updated_by.
 -- INSERT một dòng mới vào bảng FulfillmentProgress với event_timestamp = GETDATE().
--- Chỉ insert 1 bảng, không có logic kiểm tra phức tạp.
 CREATE OR ALTER PROCEDURE dbo.sp_AddFulfillmentProgress
     @fulfillment_id NVARCHAR(50),
     @step           NVARCHAR(50),
@@ -200,22 +191,18 @@ CREATE OR ALTER PROCEDURE dbo.sp_AddFulfillmentProgress
 AS
 BEGIN
     SET NOCOUNT ON;
-
     DECLARE @new_progress_id NVARCHAR(50);
-
     SELECT @new_progress_id = 'PRG' + RIGHT('0000' + CAST(ISNULL(MAX(CAST(SUBSTRING(progress_id, 4, 10) AS INT)), 0) + 1 AS VARCHAR(10)), 4)
     FROM FulfillmentProgress;
-
     INSERT INTO FulfillmentProgress (
         progress_id, step, status, event_timestamp, note, fulfillment_id, updated_by
     )
     VALUES (
         @new_progress_id, @step, @status, GETDATE(), NULL, @fulfillment_id, @updated_by
-    );
+    )
 END
 GO
-
--- Test SP3:
+-- 
 EXEC dbo.sp_AddFulfillmentProgress
     @fulfillment_id = 'FUL0014',
     @step           = 'packing',
@@ -224,9 +211,7 @@ EXEC dbo.sp_AddFulfillmentProgress
 
 SELECT TOP 2 * FROM FulfillmentProgress WHERE fulfillment_id = 'FUL0014' ORDER BY progress_id DESC;
 GO
-
-
--- SP4 — Insert với tham số (Dễ)
+-- SP4 
 -- Viết stored procedure sp_CreateShipment nhận vào @package_id, @carrier_name, @tracking_number, @managed_by.
 -- INSERT một dòng mới vào bảng Shipment với shipping_status = 'pending', pickup_scheduled_at = GETDATE().
 CREATE OR ALTER PROCEDURE dbo.sp_CreateShipment
@@ -264,7 +249,7 @@ BEGIN
 END
 GO
 
--- Test SP4:
+-- 
 EXEC dbo.sp_CreateShipment
     @package_id      = 'PKG0012',
     @carrier_name    = 'GHN',
@@ -275,11 +260,9 @@ SELECT * FROM Shipment WHERE package_id = 'PKG0012';
 GO
 
 
--- ============================================================
--- PHẦN 3 : TRIGGERS (4 CÂU: T1 - T4)
--- ============================================================
+-- PHẦN 3 : TRIGGERS 
 
--- T1 — AFTER INSERT (Dễ)
+-- T1 — AFTER INSERT 
 -- Viết trigger trg_AfterOrderItem_Insert trên bảng OrderItem.
 -- Sau khi INSERT một dòng mới, tự động UPDATE bảng Inventory: tăng quantity_reserved lên đúng bằng quantity vừa được đặt.
 -- Cần tìm đúng dòng Inventory theo product_id và warehouse_id của kho đang xử lý đơn hàng đó.
@@ -289,7 +272,6 @@ AFTER INSERT
 AS
 BEGIN
     SET NOCOUNT ON;
-
     -- Tìm warehouse_id xử lý đơn hàng thông qua bảng Orders và Fulfillment
     ;WITH OrderWarehouse AS (
         SELECT o.order_id,
@@ -314,7 +296,6 @@ BEGIN
                           AND ri.warehouse_id = inv.warehouse_id;
 END
 GO
-
 -- Test T1:
 SELECT inventory_id, warehouse_id, product_id, quantity_on_hand, quantity_reserved
 FROM Inventory
@@ -329,7 +310,7 @@ WHERE product_id = 'PRD001' AND warehouse_id = 'WH001';
 GO
 
 
--- T2 — AFTER UPDATE (Dễ)
+-- T2 — AFTER UPDATE 
 -- Viết trigger trg_AfterFulfillment_Complete trên bảng Fulfillment.
 -- Sau khi UPDATE, nếu cột status thay đổi sang giá trị 'completed'
 -- thì tự động UPDATE Orders.status = 'fulfilled' cho đơn hàng tương ứng.
@@ -363,8 +344,7 @@ WHERE fulfillment_id = 'FUL0013';
 SELECT order_id, status FROM Orders WHERE order_id = 'ORD0013';
 GO
 
-
--- T3 — BEFORE DELETE / INSTEAD OF DELETE (Trung bình)
+-- T3 — BEFORE DELETE / INSTEAD OF DELETE 
 -- Viết trigger trg_PreventDeleteActiveOrder trên bảng Orders.
 -- Trước khi DELETE, kiểm tra nếu đơn hàng đó còn Fulfillment đang ở trạng thái 'in_progress' hoặc 'pending' thì không cho xóa.
 -- In ra thông báo lỗi rõ ràng và ROLLBACK. (Dùng INSTEAD OF DELETE, nếu OK thì tự DELETE).
@@ -375,6 +355,7 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    -- Chặn nếu còn Fulfillment đang pending/in_progress
     IF EXISTS (
         SELECT 1
         FROM deleted     d
@@ -383,11 +364,10 @@ BEGIN
     )
     BEGIN
         RAISERROR(N'Không thể xóa đơn hàng: Đơn hàng vẫn còn Fulfillment đang ở trạng thái pending hoặc in_progress!', 16, 1);
-        ROLLBACK TRANSACTION;
         RETURN;
     END
 
-    -- Nếu hợp lệ thì tiến hành xóa dữ liệu phụ thuộc và xóa đơn hàng
+    -- Hợp lệ -> xóa dữ liệu phụ thuộc theo đúng thứ tự, rồi xóa Orders
     DELETE ois
     FROM OrderItemSnapshot ois
     JOIN OrderItem         oi ON oi.order_item_id = ois.order_item_id
@@ -407,12 +387,11 @@ BEGIN
 END
 GO
 
--- Test T3 (Thử xóa ORD0015 đang có FUL0015 ở trạng thái 'pending' -> sẽ bị chặn):
+-- Test T3 (ORD0015 đang có FUL0015 ở trạng thái 'pending' -> sẽ bị chặn):
 DELETE FROM Orders WHERE order_id = 'ORD0015';
 GO
 
-
--- T4 — AFTER UPDATE chuỗi bảng (Trung bình)
+-- T4 — AFTER UPDATE chuỗi bảng
 -- Viết trigger trg_AfterShipment_Delivered trên bảng Shipment.
 -- Sau khi UPDATE, nếu shipping_status thay đổi sang 'delivered' thì:
 -- - Cập nhật Orders.status = 'delivered'
@@ -460,12 +439,8 @@ SELECT shipment_id, package_id, shipping_status, delivered_at FROM Shipment WHER
 SELECT order_id, status, updated_at FROM Orders WHERE order_id = 'ORD0002';
 GO
 
-
--- ============================================================
 -- PHẦN 4 : VIEWS (2 CÂU: V1 - V2)
--- ============================================================
-
--- V1 — View đơn giản (Dễ)
+-- V1 — View đơn giản 
 -- Tạo view vw_OrderSummary hiển thị thông tin đơn hàng kèm tên khách hàng và địa chỉ giao hàng.
 -- Các cột: order_id, external_order_id, customer_name, shipping_address, total_amount, status, order_date.
 CREATE OR ALTER VIEW dbo.vw_OrderSummary
@@ -492,7 +467,7 @@ SELECT * FROM dbo.vw_OrderSummary;
 GO
 
 
--- V2 — View có GROUP BY (Trung bình)
+-- V2 
 -- Tạo view vw_FulfillmentDashboard hiển thị trạng thái xử lý đơn hàng theo kho, gồm:
 -- fulfillment_id, order_id, tên kho, tên nhân viên phụ trách, status, priority, số task đã hoàn thành.
 CREATE OR ALTER VIEW dbo.vw_FulfillmentDashboard
@@ -521,17 +496,10 @@ SELECT * FROM dbo.vw_FulfillmentDashboard;
 GO
 
 
--- ============================================================
 -- PHẦN 5 : INDEXES (2 CÂU: I1 - I2)
--- ============================================================
 
--- I1 — Single-column Index (Dễ)
+-- I1 — Single-column Index 
 -- Tạo một index đơn cột trên Orders(status) để tăng tốc các câu query thường xuyên lọc đơn hàng theo trạng thái.
--- Giải thích:
---   + Trong vận hành kho/TMĐT, hệ thống liên tục lọc các đơn hàng theo trạng thái (WHERE status = 'pending' hoặc 'processing')
---     để ưu tiên xử lý, trong khi phần lớn lịch sử đơn hàng đã ở trạng thái 'completed'/'delivered'.
---   + Đánh Non-Clustered Index trên cột status giúp SQL Server dùng Index Seek tìm thẳng tới nhóm đơn đang chờ xử lý
---     thay vì phải quét toàn bộ bảng Orders (Clustered Index Scan).
 DROP INDEX IF EXISTS idx_Orders_Status ON Orders;
 GO
 
@@ -546,14 +514,9 @@ WHERE status = 'pending';
 GO
 
 
--- I2 — Composite Index (Dễ)
+-- I2 — Composite Index 
 -- Tạo một composite index trên Inventory(warehouse_id, product_id) để tăng tốc tra cứu tồn kho.
--- Giải thích tại sao nên đặt warehouse_id trước product_id:
---   + Theo nguyên tắc Left-Prefix của B-Tree Composite Index, cột đứng đầu (warehouse_id) cho phép index phục vụ tốt
---     CẢ 2 nhóm truy vấn phổ biến nhất:
---       (1) Xem/kiểm kê toàn bộ tồn kho của một kho cụ thể (WHERE warehouse_id = @warehouse_id)
---       (2) Tra cứu tồn kho của một sản phẩm cụ thể tại một kho (WHERE warehouse_id = @warehouse_id AND product_id = @product_id)
---   + Ngoài ra, các nghiệp vụ vận hành kho luôn phân vùng theo từng kho (warehouse_id) trước rồi mới tra cứu đến từng SKU (product_id).
+
 DROP INDEX IF EXISTS idx_Inventory_Warehouse_Product ON Inventory;
 GO
 
