@@ -329,7 +329,9 @@ BEGIN
             note         = ISNULL(@note, note)
         WHERE task_id = @task_id;
 
-        SET @new_progress_id = 'PRG' + RIGHT('0000' + CAST(ABS(CHECKSUM(NEWID())) % 9000 + 1000 AS VARCHAR(4)), 4);
+        -- Sinh mã tiếp theo theo dạng PRG#### (MAX + 1), tránh trùng khóa chính
+        SELECT @new_progress_id = 'PRG' + RIGHT('0000' + CAST(ISNULL(MAX(CAST(SUBSTRING(progress_id, 4, 10) AS INT)), 0) + 1 AS VARCHAR(10)), 4)
+        FROM FulfillmentProgress;
 
         INSERT INTO FulfillmentProgress (progress_id, fulfillment_id, updated_by, step, status, event_timestamp, note)
         VALUES (
@@ -512,22 +514,17 @@ BEGIN
         RETURN;
     END
 
+    -- Giả định: mỗi sản phẩm chỉ thuộc 1 kho chính (OrderItem không có warehouse_id)
     ;WITH GroupedInserted AS (
         SELECT product_id, SUM(quantity) AS total_qty
         FROM inserted
         GROUP BY product_id
-    ),
-    TargetInventory AS (
-        SELECT inventory_id, product_id,
-               ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY (quantity_on_hand - quantity_reserved) DESC) AS rn
-        FROM Inventory
     )
     UPDATE inv
     SET quantity_reserved = inv.quantity_reserved + gi.total_qty,
         updated_at        = GETDATE()
     FROM Inventory inv
-    JOIN TargetInventory ti ON ti.inventory_id = inv.inventory_id AND ti.rn = 1
-    JOIN GroupedInserted gi ON gi.product_id   = inv.product_id;
+    JOIN GroupedInserted gi ON gi.product_id = inv.product_id;
 END
 GO
 
@@ -588,38 +585,33 @@ BEGIN
 
     IF NOT UPDATE(shipping_status) RETURN;
 
-    ;WITH DeliveredShipments AS (
-        SELECT ins.shipment_id, ins.package_id
-        FROM inserted ins
-        JOIN deleted  del ON del.shipment_id = ins.shipment_id
-        WHERE ins.shipping_status = 'delivered'
-          AND del.shipping_status <> 'delivered'
-    )
+    -- Gom các shipment vừa chuyển sang 'delivered' vào 1 bảng tạm, dùng chung cho 3 UPDATE
+    SELECT ins.shipment_id, ins.package_id
+    INTO #Delivered
+    FROM inserted ins
+    JOIN deleted  del ON del.shipment_id = ins.shipment_id
+    WHERE ins.shipping_status = 'delivered'
+      AND del.shipping_status <> 'delivered';
+
     UPDATE s
     SET delivered_at = ISNULL(s.delivered_at, GETDATE())
     FROM Shipment s
-    JOIN DeliveredShipments ds ON ds.shipment_id = s.shipment_id;
+    JOIN #Delivered d ON d.shipment_id = s.shipment_id;
 
     UPDATE pkg
     SET status     = 'delivered',
         updated_at = GETDATE()
     FROM Package pkg
-    JOIN inserted ins ON ins.package_id = pkg.package_id
-    JOIN deleted  del ON del.shipment_id = ins.shipment_id
-    WHERE ins.shipping_status = 'delivered'
-      AND del.shipping_status <> 'delivered';
+    JOIN #Delivered d ON d.package_id = pkg.package_id;
 
     UPDATE o
     SET status         = 'completed',
         payment_status = 'paid',
         updated_at     = GETDATE()
     FROM Orders o
-    JOIN Fulfillment f   ON f.order_id       = o.order_id
+    JOIN Fulfillment f   ON f.order_id         = o.order_id
     JOIN Package     pkg ON pkg.fulfillment_id = f.fulfillment_id
-    JOIN inserted    ins ON ins.package_id   = pkg.package_id
-    JOIN deleted     del ON del.shipment_id  = ins.shipment_id
-    WHERE ins.shipping_status = 'delivered'
-      AND del.shipping_status <> 'delivered';
+    JOIN #Delivered  d   ON d.package_id       = pkg.package_id;
 END
 GO
 
