@@ -1,12 +1,8 @@
 USE DBI_GROUP_7;
 GO
 
--- ============================================================
 -- PHẦN 1 : USER-DEFINED FUNCTIONS (4 CÂU: F1 - F4)
--- ============================================================
-
--- F1 — Scalar Function (Dễ)
--- Viết function fn_GetOrderTotal nhận vào 1 tham số @order_id, truy vấn bảng Orders
+-- F1 Viết function fn_GetOrderTotal nhận vào 1 tham số @order_id, truy vấn bảng Orders
 -- và trả về tổng tiền của đơn hàng đó theo công thức: subtotal + shipping_fee + tax - discount
 CREATE OR ALTER FUNCTION dbo.fn_GetOrderTotal (@order_id NVARCHAR(50))
 RETURNS DECIMAL(15, 2)
@@ -21,8 +17,7 @@ BEGIN
     RETURN ISNULL(@result, 0);
 END
 GO
-
--- Test F1:
+---
 SELECT order_id,
        external_order_id,
        subtotal,
@@ -34,8 +29,7 @@ FROM Orders;
 GO
 
 
--- F2 — Scalar Function (Dễ)
--- Viết function fn_GetAvailableStock nhận vào @warehouse_id và @product_id,
+-- F2 Viết function fn_GetAvailableStock nhận vào @warehouse_id và @product_id,
 -- truy vấn bảng Inventory và trả về số lượng hàng có thể bán: quantity_on_hand - quantity_reserved.
 -- Nếu không tìm thấy dòng nào thì trả về 0.
 CREATE OR ALTER FUNCTION dbo.fn_GetAvailableStock (
@@ -56,7 +50,7 @@ BEGIN
 END
 GO
 
--- Test F2:
+--
 SELECT warehouse_id,
        product_id,
        quantity_on_hand,
@@ -69,8 +63,7 @@ SELECT dbo.fn_GetAvailableStock('WH005', 'PRD001') AS available_stock_not_found;
 GO
 
 
--- F3 — Scalar Function (Trung bình)
--- Viết function fn_GetFulfillmentDuration nhận vào @fulfillment_id,
+-- F3 Viết function fn_GetFulfillmentDuration nhận vào @fulfillment_id,
 -- tính số phút từ start_time đến completed_time của Fulfillment đó.
 -- Nếu completed_time đang là NULL (chưa xong) thì trả về NULL.
 CREATE OR ALTER FUNCTION dbo.fn_GetFulfillmentDuration (@fulfillment_id NVARCHAR(50))
@@ -89,8 +82,7 @@ BEGIN
     RETURN @duration_minutes;
 END
 GO
-
--- Test F3:
+-- 
 SELECT fulfillment_id,
        order_id,
        status,
@@ -98,13 +90,14 @@ SELECT fulfillment_id,
        completed_time,
        dbo.fn_GetFulfillmentDuration(fulfillment_id) AS duration_minutes
 FROM Fulfillment;
-GO
 
 
--- F4 — Table-valued Function (Trung bình)
+
+-- F4 
 -- Viết function fn_GetFulfillmentsByWarehouse nhận vào @warehouse_id,
 -- trả về một bảng gồm toàn bộ Fulfillment thuộc kho đó với các cột:
 -- fulfillment_id, order_id, status, priority, start_time.
+GO
 CREATE OR ALTER FUNCTION dbo.fn_GetFulfillmentsByWarehouse (@warehouse_id NVARCHAR(50))
 RETURNS TABLE
 AS
@@ -116,23 +109,21 @@ RETURN (
            start_time
     FROM Fulfillment
     WHERE warehouse_id = @warehouse_id
-);
+)
 GO
-
 -- Test F4:
 SELECT * FROM dbo.fn_GetFulfillmentsByWarehouse('WH001');
-GO
+
 
 
 -- ============================================================
 -- PHẦN 2 : STORED PROCEDURES (4 CÂU: SP1 - SP4)
 -- ============================================================
 
--- SP1 — Insert đơn giản (Dễ)
+-- SP1 — Insert 1 bảng (Rất dễ)
 -- Viết stored procedure sp_CreateFulfillment nhận vào @order_id, @warehouse_id, @staff_id, @priority.
--- Bước 1: INSERT một dòng mới vào bảng Fulfillment với status = 'pending'
--- Bước 2: INSERT một dòng vào FulfillmentProgress với step = 'created', status = 'pending', event_timestamp = GETDATE()
--- Bọc cả 2 bước trong BEGIN TRANSACTION ... COMMIT — nếu có lỗi thì ROLLBACK.
+-- Chỉ cần INSERT một dòng mới vào bảng Fulfillment với status = 'pending', created_at = GETDATE().
+-- Không cần transaction, không cần ghi FulfillmentProgress.
 CREATE OR ALTER PROCEDURE dbo.sp_CreateFulfillment
     @order_id     NVARCHAR(50),
     @warehouse_id NVARCHAR(50),
@@ -143,49 +134,19 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @new_fulfillment_id NVARCHAR(50);
-    DECLARE @new_progress_id    NVARCHAR(50);
 
-    BEGIN TRY
-        BEGIN TRANSACTION;
+    SELECT @new_fulfillment_id = 'FUL' + RIGHT('0000' + CAST(ISNULL(MAX(CAST(SUBSTRING(fulfillment_id, 4, 10) AS INT)), 0) + 1 AS VARCHAR(10)), 4)
+    FROM Fulfillment;
 
-        -- Sinh mã fulfillment_id tiếp theo (dạng FUL####)
-        SELECT @new_fulfillment_id = 'FUL' + RIGHT('0000' + CAST(ISNULL(MAX(CAST(SUBSTRING(fulfillment_id, 4, 10) AS INT)), 0) + 1 AS VARCHAR(10)), 4)
-        FROM Fulfillment;
-
-        -- Bước 1: INSERT dòng mới vào Fulfillment với status = 'pending'
-        INSERT INTO Fulfillment (
-            fulfillment_id, status, priority, start_time, completed_time,
-            note, created_at, updated_at, order_id, warehouse_id, assigned_staff_id
-        )
-        VALUES (
-            @new_fulfillment_id, 'pending', @priority, NULL, NULL,
-            N'Khởi tạo Fulfillment mới', GETDATE(), GETDATE(),
-            @order_id, @warehouse_id, @staff_id
-        );
-
-        -- Sinh mã progress_id tiếp theo (dạng PRG####)
-        SELECT @new_progress_id = 'PRG' + RIGHT('0000' + CAST(ISNULL(MAX(CAST(SUBSTRING(progress_id, 4, 10) AS INT)), 0) + 1 AS VARCHAR(10)), 4)
-        FROM FulfillmentProgress;
-
-        -- Bước 2: INSERT dòng mới vào FulfillmentProgress dùng @new_fulfillment_id vừa tạo
-        INSERT INTO FulfillmentProgress (
-            progress_id, step, status, event_timestamp, note, fulfillment_id, updated_by
-        )
-        VALUES (
-            @new_progress_id, 'created', 'pending', GETDATE(),
-            N'Đã tạo mới tiến trình Fulfillment', @new_fulfillment_id, @staff_id
-        );
-
-        COMMIT TRANSACTION;
-        PRINT N'Tạo mới Fulfillment (' + @new_fulfillment_id + N') và FulfillmentProgress (' + @new_progress_id + N') thành công!';
-    END TRY
-    BEGIN CATCH
-        IF @@TRANCOUNT > 0
-            ROLLBACK TRANSACTION;
-
-        DECLARE @ErrMsg NVARCHAR(4000) = ERROR_MESSAGE();
-        RAISERROR(@ErrMsg, 16, 1);
-    END CATCH
+    INSERT INTO Fulfillment (
+        fulfillment_id, status, priority, start_time, completed_time,
+        note, created_at, updated_at, order_id, warehouse_id, assigned_staff_id
+    )
+    VALUES (
+        @new_fulfillment_id, 'pending', @priority, NULL, NULL,
+        NULL, GETDATE(), GETDATE(),
+        @order_id, @warehouse_id, @staff_id
+    );
 END
 GO
 
@@ -197,151 +158,78 @@ EXEC dbo.sp_CreateFulfillment
     @priority     = 1;
 
 SELECT * FROM Fulfillment WHERE order_id = 'ORD0015';
-SELECT TOP 2 * FROM FulfillmentProgress ORDER BY progress_id DESC;
 GO
 
 
--- SP2 — Update nhiều bảng (Trung bình)
--- Viết stored procedure sp_UpdateFulfillmentStatus nhận vào @fulfillment_id, @new_status, @updated_by.
--- - UPDATE Fulfillment.status = @new_status
--- - Nếu @new_status = 'completed' thì UPDATE thêm completed_time = GETDATE() và UPDATE Orders.status = 'fulfilled'
--- - INSERT một dòng mới vào FulfillmentProgress ghi lại sự thay đổi này
+-- SP2 — Update 1 bảng (Rất dễ)
+-- Viết stored procedure sp_UpdateFulfillmentStatus nhận vào @fulfillment_id, @new_status.
+-- Chỉ cần UPDATE Fulfillment.status = @new_status cho đúng dòng có fulfillment_id tương ứng.
+-- Không cần cập nhật Orders hay FulfillmentProgress.
 CREATE OR ALTER PROCEDURE dbo.sp_UpdateFulfillmentStatus
     @fulfillment_id NVARCHAR(50),
-    @new_status     NVARCHAR(50),
-    @updated_by     NVARCHAR(50)
+    @new_status     NVARCHAR(50)
 AS
 BEGIN
     SET NOCOUNT ON;
 
-    DECLARE @order_id        NVARCHAR(50);
-    DECLARE @new_progress_id NVARCHAR(50);
-
-    BEGIN TRY
-        BEGIN TRANSACTION;
-
-        SELECT @order_id = order_id
-        FROM Fulfillment
-        WHERE fulfillment_id = @fulfillment_id;
-
-        IF @order_id IS NULL
-        BEGIN
-            RAISERROR(N'Không tìm thấy mã Fulfillment!', 16, 1);
-            ROLLBACK TRANSACTION;
-            RETURN;
-        END
-
-        -- 1. Cập nhật trạng thái Fulfillment
-        UPDATE Fulfillment
-        SET status     = @new_status,
-            updated_at = GETDATE()
-        WHERE fulfillment_id = @fulfillment_id;
-
-        -- 2. Nếu trạng thái mới là 'completed' thì cập nhật completed_time và Orders.status = 'fulfilled'
-        IF @new_status = 'completed'
-        BEGIN
-            UPDATE Fulfillment
-            SET completed_time = GETDATE()
-            WHERE fulfillment_id = @fulfillment_id;
-
-            UPDATE Orders
-            SET status     = 'fulfilled',
-                updated_at = GETDATE()
-            WHERE order_id = @order_id;
-        END
-
-        -- 3. Ghi log vào bảng FulfillmentProgress
-        SELECT @new_progress_id = 'PRG' + RIGHT('0000' + CAST(ISNULL(MAX(CAST(SUBSTRING(progress_id, 4, 10) AS INT)), 0) + 1 AS VARCHAR(10)), 4)
-        FROM FulfillmentProgress;
-
-        INSERT INTO FulfillmentProgress (
-            progress_id, step, status, event_timestamp, note, fulfillment_id, updated_by
-        )
-        VALUES (
-            @new_progress_id,
-            @new_status,
-            @new_status,
-            GETDATE(),
-            N'Cập nhật trạng thái Fulfillment sang ' + @new_status,
-            @fulfillment_id,
-            @updated_by
-        );
-
-        COMMIT TRANSACTION;
-        PRINT N'Cập nhật trạng thái Fulfillment [' + @fulfillment_id + N'] sang [' + @new_status + N'] thành công!';
-    END TRY
-    BEGIN CATCH
-        IF @@TRANCOUNT > 0
-            ROLLBACK TRANSACTION;
-
-        DECLARE @ErrMsg NVARCHAR(4000) = ERROR_MESSAGE();
-        RAISERROR(@ErrMsg, 16, 1);
-    END CATCH
+    UPDATE Fulfillment
+    SET status     = @new_status,
+        updated_at = GETDATE()
+    WHERE fulfillment_id = @fulfillment_id;
 END
 GO
 
 -- Test SP2:
 EXEC dbo.sp_UpdateFulfillmentStatus
     @fulfillment_id = 'FUL0014',
-    @new_status     = 'completed',
-    @updated_by     = 'STF002';
+    @new_status     = 'packing';
 
-SELECT fulfillment_id, order_id, status, completed_time FROM Fulfillment WHERE fulfillment_id = 'FUL0014';
-SELECT order_id, status, updated_at FROM Orders WHERE order_id = 'ORD0014';
-SELECT TOP 2 * FROM FulfillmentProgress WHERE fulfillment_id = 'FUL0014' ORDER BY progress_id DESC;
+SELECT fulfillment_id, order_id, status, updated_at FROM Fulfillment WHERE fulfillment_id = 'FUL0014';
 GO
 
 
--- SP3 — Kiểm tra điều kiện trước khi gán (Trung bình)
--- Viết stored procedure sp_AssignStaffToTask nhận vào @task_id, @staff_id.
--- Trước khi gán, kiểm tra: nhân viên đó có thuộc cùng warehouse_id với Fulfillment của task không.
--- - Nếu không hợp lệ: dùng RAISERROR('Staff không thuộc kho này', 16, 1) và RETURN
--- - Nếu hợp lệ: UPDATE FulfillmentTask.assigned_staff_id = @staff_id
-CREATE OR ALTER PROCEDURE dbo.sp_AssignStaffToTask
-    @task_id  NVARCHAR(50),
-    @staff_id NVARCHAR(50)
+-- SP3 — Insert với tham số (Dễ)
+-- Viết stored procedure sp_AddFulfillmentProgress nhận vào @fulfillment_id, @step, @status, @updated_by.
+-- INSERT một dòng mới vào bảng FulfillmentProgress với event_timestamp = GETDATE().
+-- Chỉ insert 1 bảng, không có logic kiểm tra phức tạp.
+CREATE OR ALTER PROCEDURE dbo.sp_AddFulfillmentProgress
+    @fulfillment_id NVARCHAR(50),
+    @step           NVARCHAR(50),
+    @status         NVARCHAR(50),
+    @updated_by     NVARCHAR(50)
 AS
 BEGIN
     SET NOCOUNT ON;
 
-    -- Kiểm tra task_id và staff_id có cùng warehouse_id không
-    IF NOT EXISTS (
-        SELECT 1
-        FROM FulfillmentTask ft
-        JOIN Fulfillment     f  ON f.fulfillment_id = ft.fulfillment_id
-        JOIN WarehouseStaff  ws ON ws.staff_id      = @staff_id
-        WHERE ft.task_id     = @task_id
-          AND f.warehouse_id = ws.warehouse_id
+    DECLARE @new_progress_id NVARCHAR(50);
+
+    SELECT @new_progress_id = 'PRG' + RIGHT('0000' + CAST(ISNULL(MAX(CAST(SUBSTRING(progress_id, 4, 10) AS INT)), 0) + 1 AS VARCHAR(10)), 4)
+    FROM FulfillmentProgress;
+
+    INSERT INTO FulfillmentProgress (
+        progress_id, step, status, event_timestamp, note, fulfillment_id, updated_by
     )
-    BEGIN
-        RAISERROR(N'Staff không thuộc kho này', 16, 1);
-        RETURN;
-    END
-
-    UPDATE FulfillmentTask
-    SET assigned_staff_id = @staff_id
-    WHERE task_id = @task_id;
-
-    PRINT N'Đã gán nhân viên ' + @staff_id + N' cho tác vụ ' + @task_id + N' thành công!';
+    VALUES (
+        @new_progress_id, @step, @status, GETDATE(), NULL, @fulfillment_id, @updated_by
+    );
 END
 GO
 
--- Test SP3 (Trường hợp hợp lệ: TSK0057 thuộc FUL0015 ở WH001, STF002 cũng thuộc WH001):
-EXEC dbo.sp_AssignStaffToTask @task_id = 'TSK0057', @staff_id = 'STF002';
-SELECT task_id, fulfillment_id, assigned_staff_id FROM FulfillmentTask WHERE task_id = 'TSK0057';
+-- Test SP3:
+EXEC dbo.sp_AddFulfillmentProgress
+    @fulfillment_id = 'FUL0014',
+    @step           = 'packing',
+    @status         = 'in_progress',
+    @updated_by     = 'STF002';
+
+SELECT TOP 2 * FROM FulfillmentProgress WHERE fulfillment_id = 'FUL0014' ORDER BY progress_id DESC;
 GO
 
--- Test SP3 (Trường hợp không hợp lệ: STF007 thuộc WH002, khác kho WH001 của TSK0057):
-EXEC dbo.sp_AssignStaffToTask @task_id = 'TSK0057', @staff_id = 'STF007';
-GO
 
-
--- SP4 — Multi-step có validate (Trung bình)
--- Viết stored procedure sp_GenerateShipment nhận vào @package_id, @carrier_name, @tracking_number, @managed_by.
--- - Kiểm tra Package.status = 'packed' — nếu không thì báo lỗi và dừng
--- - INSERT một dòng mới vào bảng Shipment
--- - UPDATE Package.status = 'shipped'
-CREATE OR ALTER PROCEDURE dbo.sp_GenerateShipment
+-- SP4 — Insert với tham số (Dễ)
+-- Viết stored procedure sp_CreateShipment nhận vào @package_id, @carrier_name, @tracking_number, @managed_by.
+-- INSERT một dòng mới vào bảng Shipment với shipping_status = 'pending', pickup_scheduled_at = GETDATE().
+CREATE OR ALTER PROCEDURE dbo.sp_CreateShipment
     @package_id      NVARCHAR(50),
     @carrier_name    NVARCHAR(255),
     @tracking_number NVARCHAR(255),
@@ -350,70 +238,39 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
-    IF NOT EXISTS (
-        SELECT 1
-        FROM Package
-        WHERE package_id = @package_id
-          AND status     = 'packed'
-    )
-    BEGIN
-        RAISERROR(N'Kiện hàng không tồn tại hoặc không ở trạng thái packed!', 16, 1);
-        RETURN;
-    END
-
     DECLARE @new_shipment_id NVARCHAR(50);
 
-    BEGIN TRY
-        BEGIN TRANSACTION;
+    SELECT @new_shipment_id = 'SHP' + RIGHT('0000' + CAST(ISNULL(MAX(CAST(SUBSTRING(shipment_id, 4, 10) AS INT)), 0) + 1 AS VARCHAR(10)), 4)
+    FROM Shipment;
 
-        SELECT @new_shipment_id = 'SHP' + RIGHT('0000' + CAST(ISNULL(MAX(CAST(SUBSTRING(shipment_id, 4, 10) AS INT)), 0) + 1 AS VARCHAR(10)), 4)
-        FROM Shipment;
-
-        INSERT INTO Shipment (
-            shipment_id, tracking_number, carrier_name,
-            barcode_data, qr_code_data, shipping_label_url, packing_slip_url, manifest_code,
-            estimated_shipping_fee, actual_shipping_fee,
-            pickup_scheduled_at, shipped_at, delivered_at,
-            shipping_status, package_id, managed_by
-        )
-        VALUES (
-            @new_shipment_id, @tracking_number, @carrier_name,
-            @tracking_number,
-            'https://tracking.example.vn/t/' + @tracking_number,
-            'https://files.example.vn/labels/' + @tracking_number + '.pdf',
-            'https://files.example.vn/slips/' + @package_id + '.pdf',
-            'MNF-' + CONVERT(VARCHAR(8), GETDATE(), 112),
-            25000, 25000,
-            GETDATE(), GETDATE(), NULL,
-            'in_transit', @package_id, @managed_by
-        );
-
-        UPDATE Package
-        SET status     = 'shipped',
-            updated_at = GETDATE()
-        WHERE package_id = @package_id;
-
-        COMMIT TRANSACTION;
-        PRINT N'Đã khởi tạo vận đơn ' + @new_shipment_id + N' và cập nhật kiện hàng ' + @package_id + N' sang shipped!';
-    END TRY
-    BEGIN CATCH
-        IF @@TRANCOUNT > 0
-            ROLLBACK TRANSACTION;
-
-        DECLARE @ErrMsg NVARCHAR(4000) = ERROR_MESSAGE();
-        RAISERROR(@ErrMsg, 16, 1);
-    END CATCH
+    INSERT INTO Shipment (
+        shipment_id, tracking_number, carrier_name,
+        barcode_data, qr_code_data, shipping_label_url, packing_slip_url, manifest_code,
+        estimated_shipping_fee, actual_shipping_fee,
+        pickup_scheduled_at, shipped_at, delivered_at,
+        shipping_status, package_id, managed_by
+    )
+    VALUES (
+        @new_shipment_id, @tracking_number, @carrier_name,
+        @tracking_number,
+        'https://tracking.example.vn/t/' + @tracking_number,
+        'https://files.example.vn/labels/' + @tracking_number + '.pdf',
+        'https://files.example.vn/slips/' + @package_id + '.pdf',
+        'MNF-' + CONVERT(VARCHAR(8), GETDATE(), 112),
+        25000, 25000,
+        GETDATE(), NULL, NULL,
+        'pending', @package_id, @managed_by
+    );
 END
 GO
 
--- Test SP4 (Kiện hàng PKG0012 đang có status = 'packed'):
-EXEC dbo.sp_GenerateShipment
+-- Test SP4:
+EXEC dbo.sp_CreateShipment
     @package_id      = 'PKG0012',
     @carrier_name    = 'GHN',
     @tracking_number = 'GHN999888777',
     @managed_by      = 'STF004';
 
-SELECT package_id, status, updated_at FROM Package WHERE package_id = 'PKG0012';
 SELECT * FROM Shipment WHERE package_id = 'PKG0012';
 GO
 
